@@ -16,14 +16,18 @@ st.title("Monitoring Program Prioritas untuk masing-masing Ekosistem")
 # GOOGLE DRIVE AUTH VIA STREAMLIT SECRETS 
 # =========================
 sa_json = st.secrets["SERVICE_ACCOUNT_JSON"]
+
+# Buat credentials dari dict
 credentials = ServiceAccountCredentials.from_json_keyfile_dict(
     json.loads(sa_json),
     scopes=["https://www.googleapis.com/auth/drive"]
 )
 
+# GoogleAuth + Drive
 gauth = GoogleAuth()
 gauth.credentials = credentials
 drive = GoogleDrive(gauth)
+
 
 # =========================
 # FOLDER & FILE SELECTION
