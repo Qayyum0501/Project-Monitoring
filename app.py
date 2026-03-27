@@ -77,8 +77,9 @@ if selected_file:
     # =========================
     df['Start'] = pd.to_datetime(df['Start'], errors='coerce')
     df['Finish'] = pd.to_datetime(df['Finish'], errors='coerce')
-    
-    target_date = st.date_input("Pilih Target Tanggal", datetime(2026,12,8))
+
+    today = today = datetime.today()
+    target_date = st.date_input("Pilih Target Tanggal", value=today)
     target_date = datetime.combine(target_date, datetime.min.time())
     
     def networkdays(start, end):
