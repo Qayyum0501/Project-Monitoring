@@ -13,15 +13,16 @@ st.set_page_config(page_title="Project Monitoring", layout="wide")
 st.title("Monitoring Program Prioritas untuk masing-masing Ekosistem")
 
 # =========================
-# GOOGLE DRIVE AUTH
+# GOOGLE DRIVE AUTH VIA STREAMLIT SECRETS 
 # =========================
-SERVICE_ACCOUNT_FILE = "service_account.json"
-scope = ['https://www.googleapis.com/auth/drive']
+sa_json = os.environ["SERVICE_ACCOUNT_JSON"]  # Service Account JSON dari secrets.toml
+credentials = ServiceAccountCredentials.from_json_keyfile_dict(
+    json.loads(sa_json),
+    scopes=["https://www.googleapis.com/auth/drive"]
+)
 
 gauth = GoogleAuth()
-gauth.credentials = ServiceAccountCredentials.from_json_keyfile_name(
-    SERVICE_ACCOUNT_FILE, scopes=scope
-)
+gauth.credentials = credentials
 drive = GoogleDrive(gauth)
 
 # =========================
