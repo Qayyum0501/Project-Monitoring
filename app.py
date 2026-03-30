@@ -12,6 +12,7 @@ from oauth2client.service_account import ServiceAccountCredentials
 # =========================
 st.set_page_config(page_title="Project Monitoring", layout="wide")
 st.title("Monitoring Program Prioritas untuk masing-masing Ekosistem")
+tab1, tab2 = st.tabs(["🌍 Overall Ekosistem", "📊 Detail Monitoring"])
 
 # =========================
 # GOOGLE DRIVE AUTH VIA STREAMLIT SECRETS 
