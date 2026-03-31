@@ -51,17 +51,60 @@ def networkdays(start, end):
         return 0
     return np.busday_count(start.date(), end.date())
 
-def get_status(progress, baseline):
-    if progress == 0:
-        return "Not Started"
-    elif progress >= 100:
+def get_status(progress, baseline, start_date=None, finish_date=None, target_date=None):
+
+    today = target_date
+
+    # =========================
+    # FORCE CLEAN TYPES
+    # =========================
+    if pd.isna(start_date):
+        start_date = None
+    if pd.isna(finish_date):
+        finish_date = None
+
+    # =========================
+    # 1. COMPLETE
+    # =========================
+    if progress >= 100:
         return "Complete"
-    elif progress < 0.75 * baseline:
+
+    # =========================
+    # 2. LATE (TIME-BASED)
+    # =========================
+    if finish_date is not None and today is not None:
+        if today > finish_date and progress < 100:
+            return "Late"
+
+    # =========================
+    # 3. NOT STARTED (SAFE MODE)
+    # =========================
+    if progress == 0:
+
+        # kalau start_date valid baru compare
+        if start_date is not None and today is not None:
+            if today < start_date:
+                return "Not Started"
+            else:
+                return "Late"   # sudah harus mulai tapi belum jalan
+
+        # kalau start_date kosong → anggap risky
         return "Late"
-    elif progress < 0.9 * baseline:
-        return "Concern"
-    else:
-        return "On Progress"
+
+    # =========================
+    # 4. PERFORMANCE BASED
+    # =========================
+    if baseline > 0:
+        ratio = progress / baseline
+
+        if ratio < 0.75:
+            return "Late"
+        elif ratio < 0.9:
+            return "Concern"
+        else:
+            return "On Progress"
+
+    return "On Progress"
 
 def get_color(status):
     return {
@@ -234,7 +277,7 @@ with tab2:
 
         # STATUS
         sub_tasks['Status'] = sub_tasks.apply(
-            lambda x: get_status(x['% complete'], x['Baseline']), axis=1
+            lambda x: get_status(x['% complete'], x['Baseline'], x['Finish'],target_date), axis=1
         )
 
         # FILTER
@@ -318,7 +361,7 @@ with tab2:
         # STATUS PER TASK
         # =========================
         entitas_tasks['Status'] = entitas_tasks.apply(
-            lambda x: get_status(x['% complete'], x['Baseline']),
+            lambda x: get_status(x['% complete'], x['Baseline'],x['Finish'], target_date),
             axis=1
         )
 
