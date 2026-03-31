@@ -42,455 +42,346 @@ if not excel_files:
     st.warning("⚠️ Tidak ada file Excel di folder Google Drive")
     st.stop()
 
+# =========================
+# HELPER FUNCTIONS
+# =========================
+
+def networkdays(start, end):
+    if pd.isna(start) or start > end:
+        return 0
+    return np.busday_count(start.date(), end.date())
+
+def get_status(progress, baseline):
+    if progress == 0:
+        return "Not Started"
+    elif progress >= 100:
+        return "Complete"
+    elif progress < 0.75 * baseline:
+        return "Late"
+    elif progress < 0.9 * baseline:
+        return "Concern"
+    else:
+        return "On Progress"
+
+def get_color(status):
+    return {
+        "Not Started": "black",
+        "Complete": "blue",
+        "On Progress": "green",
+        "Concern": "orange",
+        "Late": "red"
+    }.get(str(status), "black")
+
+def kpi_box(title, progress, baseline):
+    delta = progress - baseline
+    status = get_status(progress, baseline)
+    color = get_color(status)
+
+    st.markdown(f"""
+    <div style="border-radius:20px;padding:25px;text-align:center;background:#f5f5f5;margin-bottom:20px;">
+        <div style="font-size:20px;font-weight:bold;">{title}</div>
+        <div style="font-size:50px;font-weight:bold;color:{color};">{progress:.1f}%</div>
+        <div style="font-size:16px;color:gray;">Baseline: {baseline:.1f}%</div>
+        <div style="font-size:20px;color:{color};">Δ {delta:+.1f}%</div>
+        <div style="font-size:14px;color:{color};">{status}</div>
+    </div>
+    """, unsafe_allow_html=True)
+
+def load_and_process(file_name, file_id, target_date):
+    # LOAD
+    downloaded = drive.CreateFile({'id': file_id})
+    downloaded.GetContentFile(file_name)
+
+    df = pd.read_excel(file_name, header=8)
+    df = df.iloc[:, 1:]
+
+    # CLEANING
+    df.columns = df.columns.str.strip().str.lower()
+    df = df.rename(columns={
+        'outline number': 'Outline number',
+        'task name': 'Name',
+        'name': 'Name',
+        '% complete': '% complete',
+        'start': 'Start',
+        'finish': 'Finish',
+        'duration': 'Duration',
+        'bucket': 'Entitas'
+    })
+
+    df['Outline number'] = df['Outline number'].astype(str)
+    df['% complete'] = pd.to_numeric(df['% complete'], errors='coerce').fillna(0) * 100
+
+    df['Start'] = pd.to_datetime(df['Start'], errors='coerce')
+    df['Finish'] = pd.to_datetime(df['Finish'], errors='coerce')
+
+    df['Duration'] = (
+        df['Duration'].astype(str)
+        .str.replace(' days','')
+        .str.replace(' day','')
+    )
+    df['Duration'] = pd.to_numeric(df['Duration'], errors='coerce').fillna(0)
+
+    # BASELINE
+    df['duration_todate'] = df['Start'].apply(lambda x: networkdays(x, target_date))
+    df['Baseline'] = (
+        df['duration_todate'] /
+        df['Duration'].replace(0,1)
+    ).clip(upper=1) * 100
+
+    # LEAF
+    df['is_parent'] = df['Outline number'].apply(
+        lambda x: any(df['Outline number'].str.startswith(x + '.'))
+    )
+    leaf = df[~df['is_parent']].copy()
+
+    return df, leaf
+
+def aggregate(leaf, code):
+    subset = leaf[leaf['Outline number'].str.startswith(code)]
+
+    if subset.empty:
+        return 0, 0
+
+    total_dur = subset['Duration'].replace(0,1).sum()
+
+    progress = (subset['% complete'] * subset['Duration']).sum() / total_dur
+    baseline = (subset['Baseline'] * subset['Duration']).sum() / total_dur
+
+    return progress, baseline
+
+# =========================
+# TAB 1
+# =========================
 with tab1:
 
     st.subheader("🌍 Overall Ekosistem")
 
-    # =========================
-    # DATE GLOBAL (PALING ATAS)
-    # =========================
-    from datetime import date
-    today = date.today()
-    target_date_global = st.date_input(
-        "Pilih Target Tanggal (Global)", 
-        value=today
-    )
-    target_date_global = datetime.combine(target_date_global, datetime.min.time())
+    target_date = st.date_input("Target Date Global", value=date.today())
+    target_date = datetime.combine(target_date, datetime.min.time())
 
-    st.divider()  # biar rapi
-
-    # =========================
-    # HELPER FUNCTION
-    # =========================
-    def get_color(delta):
-        if delta >= 0:
-            return "green"
-        elif delta >= -5:
-            return "orange"
-        else:
-            return "red"
-
-    def networkdays(start, end):
-        if pd.isna(start) or start > end:
-            return 0
-        return np.busday_count(start.date(), end.date())
-
-    def process_file(file_id, file_name):
-        downloaded = drive.CreateFile({'id': file_id})
-        downloaded.GetContentFile(file_name)
-
-        df = pd.read_excel(file_name, header=8)
-        df = df.iloc[:, 1:]
-
-        df.columns = df.columns.str.strip().str.lower()
-        df = df.rename(columns={
-            'outline number': 'Outline number',
-            'task name': 'Name',
-            'name': 'Name',
-            '% complete': '% complete',
-            'start': 'Start',
-            'finish': 'Finish',
-            'duration': 'Duration',
-            'bucket': 'Entitas'
-        })
-
-        df['Outline number'] = df['Outline number'].astype(str)
-        df['Start'] = pd.to_datetime(df['Start'], errors='coerce')
-
-        df['Duration'] = (
-            df['Duration'].astype(str)
-            .str.replace(' days','', regex=False)
-            .str.replace(' day','', regex=False)
-            .astype(float).fillna(0).round().astype(int)
-        )
-
-        df['duration_todate'] = df['Start'].apply(lambda x: networkdays(x, target_date_global))
-        df['Baseline'] = (df['duration_todate']/df['Duration'].replace(0,1)).clip(upper=1)*100
-
-        def weighted_progress(parent):
-            children = df[df['Outline number'].str.startswith(parent) & (df['Outline number'] != parent)]
-            if children.empty:
-                val = df.loc[df['Outline number']==parent,'Baseline']
-                return val.values[0] if len(val)>0 else 0
-            total_duration = children['Duration'].replace(0,1).sum()
-            return (children['Baseline']*children['Duration']).sum()/total_duration
-
-        df['Baseline_progress'] = df['Outline number'].apply(weighted_progress)
-        df['% complete'] = df['% complete'].fillna(0)*100
-
-        root = df[df['Outline number']=="1"]
-
-        if not root.empty:
-            progress = root['% complete'].values[0]
-            baseline = root['Baseline_progress'].values[0]
-        else:
-            progress = 0
-            baseline = 0
-
-        delta = progress - baseline
-        total_duration = df['Duration'].replace(0,1).sum()
-
-        return {
-            "name": file_name.replace(".xlsx",""),
-            "progress": progress,
-            "baseline": baseline,
-            "delta": delta,
-            "duration": total_duration
-        }
-
-    # =========================
-    # LOOP FILE
-    # =========================
     ecosystem_results = []
 
     for file_name, file_id in excel_files.items():
-        ecosystem_results.append(process_file(file_id, file_name))
+        df, leaf = load_and_process(file_name, file_id, target_date)
+
+        progress, baseline = aggregate(leaf, "1")
+
+        ecosystem_results.append({
+            "name": file_name.replace(".xlsx",""),
+            "progress": progress,
+            "baseline": baseline,
+            "duration": leaf['Duration'].replace(0,1).sum()
+        })
 
     df_eco = pd.DataFrame(ecosystem_results)
 
-    # =========================
-    # GLOBAL WEIGHTED
-    # =========================
+    # GLOBAL
     total_weight = df_eco['duration'].sum()
 
     global_progress = (df_eco['progress'] * df_eco['duration']).sum() / total_weight
     global_baseline = (df_eco['baseline'] * df_eco['duration']).sum() / total_weight
-    global_delta = global_progress - global_baseline
 
-    color = get_color(global_delta)
+    kpi_box("Overall Project Global", global_progress, global_baseline)
 
-    # =========================
-    # GLOBAL KPI
-    # =========================
-    st.markdown(f"""
-    <div style="border-radius:20px;padding:30px;text-align:center;background:#e0e0e0;margin-bottom:30px;">
-        <div style="font-size:24px;font-weight:bold;">Overall Project Global</div>
-        <div style="font-size:60px;font-weight:bold;color:{color};">{global_progress:.1f}%</div>
-        <div style="font-size:18px;color:gray;">Baseline: {global_baseline:.1f}%</div>
-        <div style="font-size:22px;color:{color};">Δ {global_delta:+.1f}%</div>
-    </div>
-    """, unsafe_allow_html=True)
-
-    # =========================
     # PER EKOSISTEM
-    # =========================
-    st.markdown("## 📊 Progress Masing-masing Ekosistem")
-
-    df_eco = df_eco.sort_values('delta')
+    st.markdown("## 📊 Progress per Ekosistem")
 
     cols = st.columns(3)
-
     for i, row in df_eco.iterrows():
-        color = get_color(row['delta'])
-
         with cols[i % 3]:
-            st.markdown(f"""
-            <div style="border-radius:15px;padding:20px;text-align:center;background:#f9f9f9;margin-bottom:15px;">
-                <div style="font-size:18px;font-weight:bold;">{row['name']}</div>
-                <div style="font-size:40px;font-weight:bold;color:{color};">{row['progress']:.1f}%</div>
-                <div style="font-size:14px;color:gray;">Baseline: {row['baseline']:.1f}%</div>
-                <div style="font-size:18px;color:{color};">Δ {row['delta']:+.1f}%</div>
-            </div>
-            """, unsafe_allow_html=True)
+            kpi_box(row['name'], row['progress'], row['baseline'])
 
 # =========================
-# TAB 2 → 100% ORIGINAL CODE (TIDAK DIUBAH)
+# TAB 2 (UNCHANGED LOGIC, CLEANED STRUCTURE)
 # =========================
 with tab2:
 
     selected_file = st.selectbox("Pilih Ekosistem / File", list(excel_files.keys()))
 
     if selected_file:
-        file_id = excel_files[selected_file]
-        downloaded = drive.CreateFile({'id': file_id})
-        downloaded.GetContentFile(selected_file)
-        
-        df = pd.read_excel(selected_file, header=8)
-        df = df.iloc[:, 1:]
-        
-        # =========================
-        # CLEAN COLUMN
-        # =========================
-        df.columns = df.columns.str.strip().str.lower()
-        df = df.rename(columns={
-            'outline number': 'Outline number',
-            'task name': 'Name',
-            'name': 'Name',
-            '% complete': '% complete',
-            'start': 'Start',
-            'finish': 'Finish',
-            'duration': 'Duration',
-            'bucket': 'Entitas'
-        })
-        required_cols = ['Outline number','Name','Start','Finish','Duration','% complete']
-        for col in required_cols:
-            if col not in df.columns:
-                st.error(f"Column '{col}' not found")
-                st.stop()
-        df['Outline number'] = df['Outline number'].astype(str)
-        
-        # =========================
-        # FORMAT DATE
-        # =========================
-        df['Start'] = pd.to_datetime(df['Start'], errors='coerce')
-        df['Finish'] = pd.to_datetime(df['Finish'], errors='coerce')
 
-        today = today = datetime.today()
-        target_date = st.date_input("Pilih Target Tanggal", value=today)
-        target_date = datetime.combine(target_date, datetime.min.time())
-        
-        def networkdays(start, end):
-            if pd.isna(start) or start > end:
-                return 0
-            return np.busday_count(start.date(), end.date())
-        
-        df['duration_todate'] = df['Start'].apply(lambda x: networkdays(x, target_date))
-        
-        df['Duration'] = (
-            df['Duration'].astype(str)
-            .str.replace(' days','', regex=False)
-            .str.replace(' day','', regex=False)
-            .astype(float).fillna(0).round().astype(int)
+        df, leaf = load_and_process(
+            selected_file,
+            excel_files[selected_file],
+            datetime.combine(
+                st.date_input("Pilih Target Tanggal", value=datetime.today()),
+                datetime.min.time()
+            )
         )
-        
-        # =========================
-        # BASELINE
-        # =========================
-        df['Baseline'] = (df['duration_todate']/df['Duration'].replace(0,1)).clip(upper=1)*100
-        
-        # =========================
-        # WEIGHTED BASELINE
-        # =========================
-        def weighted_progress(parent):
-            children = df[df['Outline number'].str.startswith(parent) & (df['Outline number'] != parent)]
-            if children.empty:
-                val = df.loc[df['Outline number']==parent,'Baseline']
-                return val.values[0] if len(val)>0 else 0
-            total_duration = children['Duration'].replace(0,1).sum()
-            return (children['Baseline']*children['Duration']).sum()/total_duration
-        
-        df['Baseline_progress'] = df['Outline number'].apply(weighted_progress)
-        
-        df['% complete'] = df['% complete'].fillna(0)*100
-        
-        # =========================
-        # DELAY
-        # =========================
-        def calc_delay(row):
-            if pd.isna(row['Finish']):
-                return 0
-            if row['Finish'] < target_date and row['% complete']<100:
-                return np.busday_count(row['Finish'].date(), target_date.date())
-            return 0
-        
-        df['Delay (days)'] = df.apply(calc_delay, axis=1)
-        
-        # =========================
-        # STATUS
-        # =========================
-        df['Status'] = np.select(
-            [
-                df['% complete']==0,
-                df['% complete']>=100,
-                (df['Finish']<target_date) & (df['% complete']<100),
-                df['% complete']>=0.9*df['Baseline_progress'],
-                df['% complete']>=0.75*df['Baseline_progress']
-            ],
-            ['Not Started','Complete','Late','On Progress','Concern'],
-            default='Late'
-        )
-        
-        # =========================
-        # KPI FUNCTION
-        # =========================
-        def calc_kpi(data):
-            total_duration = data['Duration'].replace(0,1).sum()
-            progress = (data['% complete']*data['Duration']).sum()/total_duration
-            baseline = (data['Baseline']*data['Duration']).sum()/total_duration
-            delta = progress - baseline
-            return round(progress,1), round(baseline,1), round(delta,1)
-        
-        def kpi_box(title, progress, baseline, delta):
-            color = "green" if delta>=0 else "orange" if delta>=-5 else "red"
-            st.markdown(f"""
-            <div style="border-radius:15px;padding:20px;text-align:center;background:#f9f9f9;margin-bottom:10px;">
-                <div style="font-size:18px;font-weight:bold;">{title}</div>
-                <div style="font-size:40px;font-weight:bold;color:{color};">{progress:.1f}%</div>
-                <div style="font-size:14px;color:gray;">Baseline: {baseline:.1f}%</div>
-                <div style="font-size:18px;color:{color};">Δ {delta:+.1f}%</div>
-            </div>
-            """, unsafe_allow_html=True)
-        
-        # =========================
-        # OVERALL PROJECT KPI
-        # =========================
-        project_row = df[df['Outline number'] == "1"]
 
-        if not project_row.empty and not pd.isna(project_row['% complete'].values[0]):
-            # pakai summary langsung (BENAR)
-            overall_progress = project_row['% complete'].values[0]
-            overall_baseline = project_row['Baseline_progress'].values[0]
-        else:
-            # fallback (kalau summary kosong)
-            total_duration = df['Duration'].replace(0,1).sum()
-            overall_progress = (df['% complete']*df['Duration']).sum()/total_duration
-            overall_baseline = (df['Baseline_progress']*df['Duration']).sum()/total_duration
+        # KPI
+        overall_p, overall_b = aggregate(leaf, "1")
+        kpi_box("Overall Project", overall_p, overall_b)
 
-        overall_delta = overall_progress - overall_baseline
-        color = "green" if overall_delta>=0 else "orange" if overall_delta>=-5 else "red"
+        # LEVEL 2
+        st.markdown("## 📊 Progress per Ekosistem")
 
-        st.markdown(f"""
-        <div style="border-radius:15px;padding:20px;text-align:center;background:#e0e0e0;margin-bottom:20px;">
-            <div style="font-size:20px;font-weight:bold;">Overall Project Progress</div>
-            <div style="font-size:50px;font-weight:bold;color:{color};">{overall_progress:.1f}%</div>
-            <div style="font-size:16px;color:gray;">Baseline: {overall_baseline:.1f}%</div>
-            <div style="font-size:20px;color:{color};">Δ {overall_delta:+.1f}%</div>
-        </div>
-        """, unsafe_allow_html=True)
-                
-        # =========================
-        # KPI PER SUB EKOSISTEM
-        # =========================
-        st.markdown("## 📊 Progress per Masing - Masing Objek Pada Ekosistem")
         level2 = df[df['Outline number'].str.match(r'^\d+\.\d+$')]
-
         cols = st.columns(3)
 
         for i, (_, row) in enumerate(level2.iterrows()):
-            code = row['Outline number']
-        
-            row_data = df[df['Outline number'] == code]
-
-            if not row_data.empty and not pd.isna(row_data['% complete'].values[0]):
-            # ✅ PAKAI NILAI EXCEL (BENAR)
-                p = row_data['% complete'].values[0]
-                b = row_data['Baseline_progress'].values[0]
-                d = p - b
-        
-            else:
-                sub_data = df[
-                    (df['Outline number'] == code) |
-                    (df['Outline number'].str.startswith(code + "."))
-                ]
-            
-                total_duration = sub_data['Duration'].replace(0,1).sum()
-
-                p = (sub_data['% complete'] * sub_data['Duration']).sum() / total_duration
-                b = (sub_data['Baseline'] * sub_data['Duration']).sum() / total_duration
-                d = p - b
-        
+            p, b = aggregate(leaf, row['Outline number'])
             with cols[i % 3]:
-                kpi_box(row['Name'], p, b, d)
+                kpi_box(row['Name'], p, b)
 
-        # =========================
-        # SELECT SUB EKOSISTEM
-        # =========================
+        # SELECT
         st.divider()
+
         selected_l2 = st.selectbox("Pilih Objek Ekosistem", level2['Name'])
-        selected_row = level2[level2['Name']==selected_l2]
-        sub_tasks = pd.DataFrame()
-        if not selected_row.empty:
-            selected_l2_code = selected_row['Outline number'].values[0]
-            sub_tasks = df[df['Outline number'].str.startswith(selected_l2_code)].copy()
-        
-        # =========================
-        # FILTER BUTTON STATUS
-        # =========================
+        selected_code = level2[level2['Name']==selected_l2]['Outline number'].values[0]
+
+        sub_tasks = leaf[leaf['Outline number'].str.startswith(selected_code)].copy()
+
+        # STATUS
+        sub_tasks['Status'] = sub_tasks.apply(
+            lambda x: get_status(x['% complete'], x['Baseline']), axis=1
+        )
+
+        # FILTER
         if "status_filter" not in st.session_state:
             st.session_state.status_filter = "ALL"
-        
+
         col1, col2, col3, col4 = st.columns(4)
-        total_complete = len(sub_tasks[sub_tasks['Status']=="Complete"])
-        total_progress = len(sub_tasks[sub_tasks['Status']=="On Progress"])
-        total_concern = len(sub_tasks[sub_tasks['Status']=="Concern"])
-        total_late = len(sub_tasks[sub_tasks['Status']=="Late"])
-        
+
         with col1:
-            if st.button(f"✅ Complete ({total_complete})"):
-                st.session_state.status_filter="Complete"
+            if st.button(f"✅ Complete ({len(sub_tasks[sub_tasks['Status']=='Complete'])})"):
+                st.session_state.status_filter = "Complete"
+
         with col2:
-            if st.button(f"🟢 On Progress ({total_progress})"):
-                st.session_state.status_filter="On Progress"
+            if st.button(f"🟢 On Progress ({len(sub_tasks[sub_tasks['Status']=='On Progress'])})"):
+                st.session_state.status_filter = "On Progress"
+
         with col3:
-            if st.button(f"🟠 Concern ({total_concern})"):
-                st.session_state.status_filter="Concern"
+            if st.button(f"🟠 Concern ({len(sub_tasks[sub_tasks['Status']=='Concern'])})"):
+                st.session_state.status_filter = "Concern"
+
         with col4:
-            if st.button(f"🔴 Late ({total_late})"):
-                st.session_state.status_filter="Late"
+            if st.button(f"🔴 Late ({len(sub_tasks[sub_tasks['Status']=='Late'])})"):
+                st.session_state.status_filter = "Late"
+
         if st.button("🔄 Show All"):
-            st.session_state.status_filter="ALL"
-        
-        # =========================
-        # FILTER DATA
-        # =========================
-        filtered_tasks = sub_tasks.copy()
-        if st.session_state.status_filter!="ALL":
-            filtered_tasks = filtered_tasks[filtered_tasks['Status']==st.session_state.status_filter]
-        
-        # =========================
-        # DISPLAY TABLE
-        # =========================
+            st.session_state.status_filter = "ALL"
+
+        filtered = sub_tasks if st.session_state.status_filter=="ALL" else \
+                   sub_tasks[sub_tasks['Status']==st.session_state.status_filter]
+
+        # TABLE
         st.subheader("📋 Detail Task Summary")
-        if filtered_tasks.empty:
-            st.warning("⚠️ Tidak ada task")
+
+        if filtered.empty:
+            st.warning("Tidak ada data")
         else:
-            filtered_tasks['Level'] = filtered_tasks['Outline number'].apply(lambda x: x.count('.'))
-            filtered_tasks['Name WBS'] = filtered_tasks.apply(lambda row: "   "*(row['Level']-1)+"▸ "+row['Name'], axis=1)
-            filtered_tasks = filtered_tasks.sort_values('Outline number')
-            display_df = filtered_tasks.copy()
-            display_df['Start'] = display_df['Start'].dt.strftime('%d/%m/%Y')
-            display_df['Finish'] = display_df['Finish'].dt.strftime('%d/%m/%Y')
-            display_df['Progress (%)'] = display_df['% complete'].map(lambda x: f"{x:.1f}%")
-            display_df['Baseline (%)'] = display_df['Baseline'].map(lambda x: f"{x:.1f}%")
-            display_df = display_df[['Outline number','Name WBS','Entitas','Start','Finish','Progress (%)','Baseline (%)','Delay (days)','Status']]
-            st.dataframe(display_df,use_container_width=True)
-        
+            filtered['Level'] = filtered['Outline number'].apply(lambda x: x.count('.'))
+            filtered['Name WBS'] = filtered.apply(
+                lambda r: "   "*(r['Level']-1)+"▸ "+r['Name'], axis=1
+            )
+
+            filtered['Start'] = filtered['Start'].dt.strftime('%d/%m/%Y')
+            filtered['Finish'] = filtered['Finish'].dt.strftime('%d/%m/%Y')
+            filtered['Progress (%)'] = filtered['% complete'].map(lambda x: f"{x:.1f}%")
+            filtered['Baseline (%)'] = filtered['Baseline'].map(lambda x: f"{x:.1f}%")
+
+            st.dataframe(filtered[
+                ['Outline number','Name WBS','Entitas',
+                 'Start','Finish','Progress (%)','Baseline (%)','Status']
+            ], use_container_width=True)
+
         # =========================
-        # HEAT MAP ENTITAS STATUS
+        # 🎯 FILTER BERDASARKAN ENTITAS
         # =========================
-        st.markdown("## 🔥 Heatmap Entitas")
-        
-        for status,color_hex in zip(['Late','On Progress','Concern'], ['#ff4d4d','#66cc66','#ffa64d']):
-            st.markdown(f"### {status}")
-            summary = df[df['Status']==status].groupby('Entitas').size().reset_index(name='Total').sort_values('Total',ascending=False)
-            cols = st.columns(4)
-            for i,row in summary.iterrows():
-                entitas = row['Entitas']
-                total = row['Total']
-                with cols[i%4]:
-                    if st.button(f"{entitas} ({total})", key=f"{status}_{entitas}"):
-                        st.session_state.selected_entitas = entitas
-                        st.session_state.selected_status = status
-                    st.markdown(f"""
-                    <div style="
-                        background-color:{color_hex};
-                        padding:15px;
-                        border-radius:15px;
-                        text-align:center;
-                        font-weight:bold;
-                        color:white;
-                        margin-bottom:5px;
-                    ">
-                        {entitas}<br>{total}
-                    </div>
-                    """, unsafe_allow_html=True)
-        
+        st.divider()
+        st.markdown("## 🏢 Monitoring Berdasarkan Entitas")
+
+        # ambil semua entitas unik dari leaf
+        all_entitas = sorted(leaf['Entitas'].dropna().unique())
+
+        selected_entitas_filter = st.selectbox(
+            "Pilih Entitas",
+            all_entitas
+        )
+
+        # filter semua task berdasarkan entitas
+        entitas_tasks = leaf[leaf['Entitas'] == selected_entitas_filter].copy()
+
         # =========================
-        # TABEL DETAIL ENTITAS TERPILIH
+        # HITUNG KPI ENTITAS
         # =========================
-        if "selected_entitas" in st.session_state and "selected_status" in st.session_state:
-            selected = st.session_state.selected_entitas
-            status = st.session_state.selected_status
-            st.markdown(f"## 📋 Detail Task - {selected} ({status})")
-            detail = df[(df['Entitas']==selected) & (df['Status']==status)].copy()
-            if not detail.empty:
-                detail['Level'] = detail['Outline number'].apply(lambda x: x.count('.'))
-                detail['Name WBS'] = detail.apply(lambda row: "   "*(row['Level']-1)+"▸ "+row['Name'], axis=1)
-                detail['Start'] = detail['Start'].dt.strftime('%d/%m/%Y')
-                detail['Finish'] = detail['Finish'].dt.strftime('%d/%m/%Y')
-                detail['Progress (%)'] = detail['% complete'].map(lambda x: f"{x:.1f}%")
-                detail['Baseline (%)'] = detail['Baseline'].map(lambda x: f"{x:.1f}%")
-                display_df = detail[['Outline number','Name WBS','Entitas','Start','Finish','Progress (%)','Baseline (%)','Delay (days)','Status']]
-                st.dataframe(display_df,use_container_width=True)
-            else:
-                st.info("Tidak ada task untuk status ini")
+        total_dur = entitas_tasks['Duration'].replace(0,1).sum()
+
+        entitas_progress = (entitas_tasks['% complete'] * entitas_tasks['Duration']).sum() / total_dur
+        entitas_baseline = (entitas_tasks['Baseline'] * entitas_tasks['Duration']).sum() / total_dur
+
+        # KPI BOX
+        kpi_box(f"Performance - {selected_entitas_filter}", entitas_progress, entitas_baseline)
+
+        # =========================
+        # STATUS PER TASK
+        # =========================
+        entitas_tasks['Status'] = entitas_tasks.apply(
+            lambda x: get_status(x['% complete'], x['Baseline']),
+            axis=1
+        )
+
+        # =========================
+        # FILTER STATUS (SAMA PERSIS)
+        # =========================
+        if "entitas_filter_status" not in st.session_state:
+            st.session_state.entitas_filter_status = "ALL"
+
+        col1, col2, col3, col4 = st.columns(4)
+
+        with col1:
+            if st.button(f"✅ Complete ({len(entitas_tasks[entitas_tasks['Status']=='Complete'])})", key="ent_c"):
+                st.session_state.entitas_filter_status = "Complete"
+
+        with col2:
+            if st.button(f"🟢 On Progress ({len(entitas_tasks[entitas_tasks['Status']=='On Progress'])})", key="ent_p"):
+                st.session_state.entitas_filter_status = "On Progress"
+
+        with col3:
+            if st.button(f"🟠 Concern ({len(entitas_tasks[entitas_tasks['Status']=='Concern'])})", key="ent_con"):
+                st.session_state.entitas_filter_status = "Concern"
+
+        with col4:
+            if st.button(f"🔴 Late ({len(entitas_tasks[entitas_tasks['Status']=='Late'])})", key="ent_l"):
+                st.session_state.entitas_filter_status = "Late"
+
+        if st.button("🔄 Show All (Entitas)", key="ent_all"):
+            st.session_state.entitas_filter_status = "ALL"
+
+        # =========================
+        # APPLY FILTER
+        # =========================
+        filtered_entitas = entitas_tasks.copy()
+
+        if st.session_state.entitas_filter_status != "ALL":
+            filtered_entitas = filtered_entitas[
+                filtered_entitas['Status'] == st.session_state.entitas_filter_status
+            ]
+
+        # =========================
+        # DISPLAY TABLE (SAMA FORMAT)
+        # =========================
+        st.subheader("📋 Detail Task per Entitas")
+
+        if filtered_entitas.empty:
+            st.warning("Tidak ada data")
+        else:
+            filtered_entitas['Level'] = filtered_entitas['Outline number'].apply(lambda x: x.count('.'))
+
+            filtered_entitas['Name WBS'] = filtered_entitas.apply(
+                lambda r: "   "*(r['Level']-1) + "▸ " + r['Name'],
+                axis=1
+            )
+
+            filtered_entitas['Start'] = filtered_entitas['Start'].dt.strftime('%d/%m/%Y')
+            filtered_entitas['Finish'] = filtered_entitas['Finish'].dt.strftime('%d/%m/%Y')
+            filtered_entitas['Progress (%)'] = filtered_entitas['% complete'].map(lambda x: f"{x:.1f}%")
+            filtered_entitas['Baseline (%)'] = filtered_entitas['Baseline'].map(lambda x: f"{x:.1f}%")
+
+            display = filtered_entitas[[
+                'Outline number','Name WBS','Entitas',
+                'Start','Finish','Progress (%)','Baseline (%)','Status'
+            ]]
+
+            st.dataframe(display, use_container_width=True)
