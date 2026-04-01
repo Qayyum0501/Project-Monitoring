@@ -219,11 +219,12 @@ if not st.session_state.logged_in:
 # =========================
 # GOOGLE DRIVE AUTH VIA STREAMLIT SECRETS 
 # =========================
-sa_json = st.secrets["SERVICE_ACCOUNT_JSON"]
+from oauth2client.service_account import ServiceAccountCredentials
 
-# Buat credentials dari dict
+service_account_info = st.secrets["gcp_service_account"]
+
 credentials = ServiceAccountCredentials.from_json_keyfile_dict(
-    json.loads(sa_json),
+    service_account_info,
     scopes=["https://www.googleapis.com/auth/drive"]
 )
 
