@@ -389,16 +389,6 @@ if st.session_state.active_tab == "tab2":
     if selected_file:
 
         # =========================
-        # TARGET DATE
-        # =========================
-        global_target_date = st.date_input(
-            "Pilih Target Tanggal",
-            value=date.today(),
-            key="global_target_date_tab2"
-        )
-        global_target_date = datetime.combine(global_target_date, datetime.min.time())
-
-        # =========================
         # LOAD DATA
         # =========================
         df, leaf = load_and_process(
