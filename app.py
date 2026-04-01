@@ -127,6 +127,8 @@ if not excel_files:
     st.warning("⚠️ Tidak ada file Excel di folder Google Drive")
     st.stop()
 
+
+
 # =========================
 # HELPER FUNCTIONS
 # =========================
@@ -231,8 +233,14 @@ def load_and_process(file_name, file_id, global_target_date):
         'start': 'Start',
         'finish': 'Finish',
         'duration': 'Duration',
-        'bucket': 'Entitas'
+        'bucket': 'Entitas',
+        'progress':'Progress',
+        'issues':'Issues'
     })
+
+    for col in ['Progress', 'Issues']:
+        if col not in df.columns:
+            df[col] = ""
 
     df['Outline number'] = df['Outline number'].astype(str)
     df['% complete'] = pd.to_numeric(df['% complete'], errors='coerce').fillna(0) * 100
@@ -538,7 +546,48 @@ if st.session_state.active_tab == "tab2":
                         'Finish',
                         'Progress (%)',
                         'Baseline (%)',
-                        'Status'
+                        'Status',
+                        'Issues',
+                        'Progress'
+                    ]
+                ],
+                use_container_width=True,
+                hide_index=True
+            )
+        # =========================
+        # DELAY RANKING (ALL LATE TASK)
+        # =========================
+        st.markdown("## 🔴 Rank Late Task List per Objek)")
+
+        late_tasks = sub_tasks[sub_tasks['Status'] == "Late"].copy()
+
+        if late_tasks.empty:
+            st.success("Tidak ada task yang mengalami keterlambatan 👍")
+        else:
+            today = pd.to_datetime(global_target_date)
+
+            late_tasks['Delay (Days)'] = late_tasks['Finish'].apply(
+                lambda x: (today - x).days if pd.notna(x) and today > x else 0
+            )
+
+            late_tasks = late_tasks.sort_values(by='Delay (Days)', ascending=False)
+
+            late_tasks['Start'] = pd.to_datetime(late_tasks['Start'], errors='coerce').dt.strftime('%d/%m/%Y')
+            late_tasks['Finish'] = pd.to_datetime(late_tasks['Finish'], errors='coerce').dt.strftime('%d/%m/%Y')
+
+            late_tasks = late_tasks.reset_index(drop=True)
+            late_tasks['Rank'] = late_tasks.index + 1
+
+            st.dataframe(
+                late_tasks[
+                    [
+                        'Rank',
+                        'Outline number',
+                        'Name',
+                        'Entitas',
+                        'Finish',
+                        'Delay (Days)',
+                        'Issues'
                     ]
                 ],
                 use_container_width=True,
@@ -696,7 +745,47 @@ if st.session_state.active_tab == "tab2":
                         'Finish',
                         'Progress (%)',
                         'Baseline (%)',
-                        'Status'
+                        'Status',
+                        'Issues',
+                        'Progress'
+                    ]
+                ],
+                use_container_width=True,
+                hide_index=True
+            )
+        # =========================
+        # DELAY RANKING PER ENTITAS
+        # =========================
+        st.markdown("## 🔴 Ranking Late Task per Entitas")
+
+        late_entitas = entitas_tasks[entitas_tasks['Status'] == "Late"].copy()
+
+        if late_entitas.empty:
+            st.success("Tidak ada keterlambatan pada entitas ini 👍")
+        else:
+            today = pd.to_datetime(global_target_date)
+
+            late_entitas['Delay (Days)'] = late_entitas['Finish'].apply(
+                lambda x: (today - x).days if pd.notna(x) and today > x else 0
+            )
+
+            late_entitas = late_entitas.sort_values(by='Delay (Days)', ascending=False)
+
+            late_entitas['Start'] = pd.to_datetime(late_entitas['Start'], errors='coerce').dt.strftime('%d/%m/%Y')
+            late_entitas['Finish'] = pd.to_datetime(late_entitas['Finish'], errors='coerce').dt.strftime('%d/%m/%Y')
+
+            late_entitas = late_entitas.reset_index(drop=True)
+            late_entitas['Rank'] = late_entitas.index + 1
+
+            st.dataframe(
+                late_entitas[
+                    [
+                        'Rank',
+                        'Outline number',
+                        'Name',
+                        'Entitas',
+                        'Delay (Days)',
+                        'Issues',
                     ]
                 ],
                 use_container_width=True,
