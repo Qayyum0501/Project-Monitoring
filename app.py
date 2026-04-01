@@ -9,6 +9,212 @@ from oauth2client.service_account import ServiceAccountCredentials
 import base64
 import re
 
+def get_base64_image(image_path):
+    with open(image_path, "rb") as img_file:
+        return base64.b64encode(img_file.read()).decode()
+
+logo_base64 = get_base64_image("logo_pelindo.png")
+
+# =========================
+# CONFIG
+# =========================
+st.set_page_config(page_title="Login - Dashboard Pelindo", layout="centered")
+
+# =========================
+# LOAD LOGO
+# =========================
+def get_base64_image(image_path):
+    with open(image_path, "rb") as img_file:
+        return base64.b64encode(img_file.read()).decode()
+
+logo_base64 = get_base64_image("logo_pelindo.png")
+
+# =========================
+# LOGIN FUNCTION
+# =========================
+def check_login(username, password):
+    return (
+        username == st.secrets["auth"]["username"]
+        and password == st.secrets["auth"]["password"]
+    )
+
+# =========================
+# SESSION
+# =========================
+if "logged_in" not in st.session_state:
+    st.session_state.logged_in = False
+
+# =========================
+# LOGIN PAGE
+# =========================
+if not st.session_state.logged_in:
+
+    st.markdown(f"""
+    <style>
+
+    /* =========================
+       BACKGROUND (PREMIUM DARK)
+    ========================= */
+    .stApp {{
+        background: linear-gradient(135deg, #000000, #020617, #0b2c5a);
+    }}
+
+    /* CENTERING */
+    .wrapper {{
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        height: 95vh;
+    }}
+
+    /* =========================
+       GLASS CARD
+    ========================= */
+    .card {{
+        width: 420px;
+        border-radius: 24px;
+        backdrop-filter: blur(18px);
+        background: rgba(255,255,255,0.08);
+        border: 1px solid rgba(255,255,255,0.15);
+        box-shadow: 0 20px 60px rgba(0,0,0,0.6);
+        overflow: hidden;
+        transition: all 0.3s ease;
+    }}
+
+    .card:hover {{
+        transform: translateY(-5px);
+        box-shadow: 0 30px 80px rgba(0,0,0,0.8);
+    }}
+
+    /* HEADER */
+    .header {{
+        text-align: center;
+        padding: 35px 30px 20px 30px;
+    }}
+
+    .header img {{
+        height: 75px;
+        margin-bottom: 15px;
+        filter: drop-shadow(0 4px 10px rgba(255,255,255,0.2));
+    }}
+
+    .title {{
+        color: white;
+        font-size: 22px;
+        font-weight: 700;
+    }}
+
+    .subtitle {{
+        color: #94a3b8;
+        font-size: 13px;
+    }}
+
+    /* FORM AREA (WHITE CLEAN) */
+    .form-container {{
+        background: white;
+        padding: 30px;
+        border-top-left-radius: 24px;
+        border-top-right-radius: 24px;
+    }}
+
+    /* INPUT FIX */
+    input {{
+        background-color: #f9fafb !important;
+        color: black !important;
+        border-radius: 10px !important;
+        border: 1px solid #e5e7eb !important;
+        padding: 10px !important;
+        transition: all 0.2s ease;
+    }}
+
+    input:focus {{
+        border: 1px solid #0b2c5a !important;
+        box-shadow: 0 0 0 2px rgba(11,44,90,0.2) !important;
+    }}
+
+    /* LABEL */
+    label {{
+        color: #111827 !important;
+        font-weight: 600;
+    }}
+
+    /* BUTTON */
+    .stButton button {{
+        width: 100%;
+        height: 48px;
+        border-radius: 12px;
+        background: linear-gradient(90deg, #0b2c5a, #1e3a8a);
+        color: white;
+        font-weight: 700;
+        border: none;
+        transition: all 0.3s ease;
+    }}
+
+    .stButton button:hover {{
+        transform: scale(1.03);
+        box-shadow: 0 10px 25px rgba(11,44,90,0.4);
+    }}
+
+    /* ERROR TEXT */
+    .error {{
+        color: #ef4444;
+        font-size: 13px;
+        margin-top: 10px;
+    }}
+
+    </style>
+
+    <div class="wrapper">
+        <div class="card">
+            <div class="header">
+                <img src="data:image/png;base64,{logo_base64}">
+                <div class="title">Dashboard Monitoring</div>
+                <div class="subtitle">Program Prioritas Pelindo Group</div>
+            </div>
+            <div class="form-container">
+    """, unsafe_allow_html=True)
+
+    # =========================
+    # FORM LOGIN
+    # =========================
+    with st.form("login_form"):
+        username = st.text_input("Username")
+        password = st.text_input("Password", type="password")
+
+        login_btn = st.form_submit_button("Login")
+
+        if login_btn:
+            if check_login(username, password):
+                st.session_state.logged_in = True
+                st.success("Login berhasil")
+                st.rerun()
+            else:
+                st.markdown('<div class="error">❌ Password salah</div>', unsafe_allow_html=True)
+
+    st.markdown("""
+    <style>
+
+    /* LABEL Username & Password */
+    div[data-testid="stTextInput"] label {
+        color: white !important;
+        font-weight: 600;
+    }
+
+    /* Input biar tetap putih */
+    div[data-testid="stTextInput"] input {
+        background-color: #f9fafb !important;
+        color: black !important;
+    }
+
+    /* Password field */
+    div[data-testid="stTextInput"] + div label {
+        color: white !important;
+    }
+
+    </style>
+    """, unsafe_allow_html=True)
+
+    st.stop()
 
 # =========================
 # GOOGLE DRIVE AUTH VIA STREAMLIT SECRETS 
@@ -31,11 +237,12 @@ drive = GoogleDrive(gauth)
 # =========================
 st.set_page_config(page_title="Project Monitoring", layout="wide")
 
-def get_base64_image(image_path):
-    with open(image_path, "rb") as img_file:
-        return base64.b64encode(img_file.read()).decode()
+col1, col2 = st.columns([10,1])
 
-logo_base64 = get_base64_image("logo_pelindo.png")
+with col2:
+    if st.button("🚪Logout"):
+        st.session_state.logged_in = False
+        st.rerun()
 
 # =========================
 # HEADER (NAVY + LOGO BLENDED)
