@@ -221,7 +221,7 @@ if not st.session_state.logged_in:
 # =========================
 from oauth2client.service_account import ServiceAccountCredentials
 
-service_account_info = st.secrets["gcp_service_account"]
+service_account_info = st.secrets["service_account"]
 
 credentials = ServiceAccountCredentials.from_json_keyfile_dict(
     service_account_info,
