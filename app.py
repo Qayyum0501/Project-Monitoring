@@ -348,7 +348,7 @@ if st.session_state.active_tab == "tab1":
 
     st.subheader("🌍 Overall Ekosistem")
 
-    st.info("Isi Tab 1 (Overall)")
+    st.info("Halaman ini memberikan gambaran menyeluruh terkait progres program prioritas Pelindo Group, baik secara total maupun per program")
 
     ecosystem_results = []
 
@@ -386,7 +386,7 @@ if st.session_state.active_tab == "tab2":
 
     st.subheader("📊 Detail Monitoring")
 
-    st.info("Isi Tab 2 (Detail)")
+    st.info("Detail monitoring untuk masing masing program prioritas")
 
     selected_file = st.selectbox(
         "Pilih Ekosistem / File",
@@ -557,7 +557,7 @@ if st.session_state.active_tab == "tab2":
         # =========================
         # DELAY RANKING (ALL LATE TASK)
         # =========================
-        st.markdown("## 🔴 Rank Late Task List per Objek)")
+        st.markdown("## 🔴 Rank Late Task List per Objek")
 
         late_tasks = sub_tasks[sub_tasks['Status'] == "Late"].copy()
 
