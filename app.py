@@ -6,13 +6,9 @@ import json
 from pydrive.auth import GoogleAuth
 from pydrive.drive import GoogleDrive
 from oauth2client.service_account import ServiceAccountCredentials
+import base64
+import re
 
-# =========================
-# PAGE CONFIG
-# =========================
-st.set_page_config(page_title="Project Monitoring", layout="wide")
-st.title("Monitoring Program Prioritas untuk masing-masing Ekosistem")
-tab1, tab2 = st.tabs(["🌍 Overall Ekosistem", "📊 Detail Monitoring"])
 
 # =========================
 # GOOGLE DRIVE AUTH VIA STREAMLIT SECRETS 
@@ -30,6 +26,95 @@ gauth = GoogleAuth()
 gauth.credentials = credentials
 drive = GoogleDrive(gauth)
 
+# =========================
+# CONFIG
+# =========================
+st.set_page_config(page_title="Project Monitoring", layout="wide")
+
+def get_base64_image(image_path):
+    with open(image_path, "rb") as img_file:
+        return base64.b64encode(img_file.read()).decode()
+
+logo_base64 = get_base64_image("logo_pelindo.png")
+
+# =========================
+# HEADER (NAVY + LOGO BLENDED)
+# =========================
+st.markdown(f"""
+<style>
+.header {{
+    background: linear-gradient(90deg, #0b2c5a, #134e96);
+    padding: 20px 30px;
+    border-radius: 12px;
+    margin-bottom: 25px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.2);
+}}
+
+.header-text {{
+    color: white;
+}}
+
+.header-title {{
+    font-size: 32px;
+    font-weight: 700;
+    margin: 0;
+}}
+
+.header-subtitle {{
+    font-size: 14px;
+    color: #cbd5e1;
+    margin-top: 5px;
+}}
+
+.header-logo img {{
+    height: 65px;
+}}
+
+.tab-container {{
+    display: flex;
+    gap: 10px;
+    margin-bottom: 20px;
+}}
+
+.tab-button {{
+    flex: 1;
+}}
+
+.tab-button button {{
+    width: 100%;
+    height: 60px;
+    border-radius: 12px;
+    border: none;
+    background-color: #e5e7eb;
+    font-size: 16px;
+    font-weight: 600;
+    color: #374151;
+    transition: all 0.2s ease;
+}}
+
+.tab-button button:hover {{
+    background-color: #d1d5db;
+    color: black;
+}}
+</style>
+
+<div class="header">
+    <div class="header-text">
+        <div class="header-title">
+            Monitoring Program Prioritas Pelindo Group
+        </div>
+        <div class="header-subtitle">
+            Created by Group MNEV
+        </div>
+    </div>
+    <div class="header-logo">
+        <img src="data:image/png;base64,{logo_base64}">
+    </div>
+</div>
+""", unsafe_allow_html=True)
 
 # =========================
 # GET FILES
@@ -57,14 +142,14 @@ def networkdays(start, end):
 # STATUS ENGINE (FIXED CORE)
 # =========================
 
-def get_status(progress, baseline, start_date, finish_date, target_date):
+def get_status(progress, baseline, start_date, finish_date, global_target_date):
 
     start_date = pd.to_datetime(start_date, errors='coerce')
     finish_date = pd.to_datetime(finish_date, errors='coerce')
-    target_date = pd.to_datetime(target_date, errors='coerce')
+    global_target_date = pd.to_datetime(global_target_date, errors='coerce')
 
-    if pd.isna(target_date):
-        target_date = pd.Timestamp.today()
+    if pd.isna(global_target_date):
+        global_target_date = pd.Timestamp.today()
 
     # COMPLETE
     if progress >= 100:
@@ -72,14 +157,14 @@ def get_status(progress, baseline, start_date, finish_date, target_date):
 
     # NOT STARTED (before start date)
     if progress == 0:
-        if pd.notna(start_date) and target_date < start_date:
+        if pd.notna(start_date) and global_target_date < start_date:
             return "Not Started"
-        if pd.notna(start_date) and target_date >= start_date:
+        if pd.notna(start_date) and global_target_date >= start_date:
             return "Late"
         return "Not Started"
 
     # LATE (OVERDUE FINISH)
-    if pd.notna(finish_date) and target_date > finish_date:
+    if pd.notna(finish_date) and global_target_date > finish_date:
         return "Late"
 
     # PERFORMANCE LOGIC
@@ -129,7 +214,7 @@ def kpi_box(title, progress, baseline, start=None, finish=None, target=None):
 # LOAD DATA
 # =========================
 
-def load_and_process(file_name, file_id, target_date):
+def load_and_process(file_name, file_id, global_target_date):
 
     downloaded = drive.CreateFile({'id': file_id})
     downloaded.GetContentFile(file_name)
@@ -162,7 +247,7 @@ def load_and_process(file_name, file_id, target_date):
     )
     df['Duration'] = pd.to_numeric(df['Duration'], errors='coerce').fillna(0)
 
-    df['duration_todate'] = df['Start'].apply(lambda x: networkdays(x, target_date))
+    df['duration_todate'] = df['Start'].apply(lambda x: networkdays(x, global_target_date))
 
     df['Baseline'] = (
         df['duration_todate'] /
@@ -195,22 +280,72 @@ def aggregate(leaf, code):
 
     return progress, baseline
 
+# =========================
+# GLOBAL TARGET DATE (PALING ATAS)
+# =========================
+st.markdown("## 📅 Date")
+
+global_target_date = st.date_input(
+    "Pilih Target Tanggal",
+    value=date.today(),
+    key="global_target_date"
+)
+
+global_target_date = datetime.combine(global_target_date, datetime.min.time())
+
+
+# =========================
+# TAB STATE
+# =========================
+if "active_tab" not in st.session_state:
+    st.session_state.active_tab = "tab1"
+
+# =========================
+# TAB BUTTONS (BOX STYLE)
+# =========================
+col1, col2 = st.columns(2)
+
+with col1:
+    if st.button("🌍 Overall Ekosistem", key="tab1_btn", use_container_width=True):
+        st.session_state.active_tab = "tab1"
+
+with col2:
+    if st.button("📊 Detail Monitoring", key="tab2_btn", use_container_width=True):
+        st.session_state.active_tab = "tab2"
+
+
+# =========================
+# ACTIVE TAB STYLE (IMPORTANT 🔥)
+# =========================
+active_index = 1 if st.session_state.active_tab == "tab1" else 2
+
+st.markdown(f"""
+<style>
+.tab-container div[data-testid="stHorizontalBlock"] > div:nth-child({active_index}) button {{
+    background-color: #0b2c5a !important;
+    color: white !important;
+    font-weight: 700;
+    border: 2px solid #0b2c5a;
+}}
+</style>
+""", unsafe_allow_html=True)
+
+#tab1, tab2 = st.tabs(["🌍 Overall Ekosistem", "📊 Detail Monitoring"])
 
 # =========================
 # TAB 1
 # =========================
 
-with tab1:
+if st.session_state.active_tab == "tab1":
 
     st.subheader("🌍 Overall Ekosistem")
 
-    target_date = st.date_input("Target Date Global", value=date.today())
-    target_date = datetime.combine(target_date, datetime.min.time())
+    st.info("Isi Tab 1 (Overall)")
 
     ecosystem_results = []
 
     for file_name, file_id in excel_files.items():
-        df, leaf = load_and_process(file_name, file_id, target_date)
+        df, leaf = load_and_process(file_name, file_id, global_target_date)
 
         progress, baseline = aggregate(leaf, "1")
 
@@ -228,20 +363,22 @@ with tab1:
     global_progress = (df_eco['progress'] * df_eco['duration']).sum() / total_weight
     global_baseline = (df_eco['baseline'] * df_eco['duration']).sum() / total_weight
 
-    kpi_box("Overall Project Global", global_progress, global_baseline, None, None, target_date)
+    kpi_box("Overall Project Global", global_progress, global_baseline, None, None, global_target_date)
 
     st.markdown("## 📊 Progress per Ekosistem")
 
     cols = st.columns(3)
     for i, row in df_eco.iterrows():
         with cols[i % 3]:
-            kpi_box(row['name'], row['progress'], row['baseline'], None, None, target_date)
+            kpi_box(row['name'], row['progress'], row['baseline'], None, None, global_target_date)
 
 
 
-with tab2:
+if st.session_state.active_tab == "tab2":
 
-    import re
+    st.subheader("📊 Detail Monitoring")
+
+    st.info("Isi Tab 2 (Detail)")
 
     selected_file = st.selectbox(
         "Pilih Ekosistem / File",
@@ -254,12 +391,12 @@ with tab2:
         # =========================
         # TARGET DATE
         # =========================
-        target_date = st.date_input(
+        global_target_date = st.date_input(
             "Pilih Target Tanggal",
             value=date.today(),
-            key="target_date_tab2"
+            key="global_target_date_tab2"
         )
-        target_date = datetime.combine(target_date, datetime.min.time())
+        global_target_date = datetime.combine(global_target_date, datetime.min.time())
 
         # =========================
         # LOAD DATA
@@ -267,7 +404,7 @@ with tab2:
         df, leaf = load_and_process(
             selected_file,
             excel_files[selected_file],
-            target_date
+            global_target_date
         )
 
         # =========================
@@ -280,7 +417,7 @@ with tab2:
         # KPI GLOBAL
         # =========================
         overall_p, overall_b = aggregate(leaf, "1")
-        kpi_box("Overall Project", overall_p, overall_b, None, None, target_date)
+        kpi_box("Overall Project", overall_p, overall_b, None, None, global_target_date)
 
         # =========================
         # LEVEL 2 KPI
@@ -294,7 +431,7 @@ with tab2:
         for i, (_, row) in enumerate(level2.iterrows()):
             p, b = aggregate(leaf, row['Outline number'])
             with cols[i % 3]:
-                kpi_box(row['Name'], p, b, None, None, target_date)
+                kpi_box(row['Name'], p, b, None, None, global_target_date)
 
         # =========================
         # SELECT OBJECT
@@ -339,7 +476,7 @@ with tab2:
                 x['Baseline'],
                 x['Start'],
                 x['Finish'],
-                target_date
+                global_target_date
             ),
             axis=1
         )
@@ -424,8 +561,7 @@ with tab2:
         st.divider()
         st.markdown("## 🏢 Monitoring Berdasarkan Entitas")
 
-        import re
-
+        
         all_entitas = sorted(leaf['Entitas'].dropna().unique())
 
         selected_entitas = st.selectbox(
@@ -484,7 +620,7 @@ with tab2:
             entitas_baseline,
             None,
             None,
-            target_date
+            global_target_date
         )
 
         # =========================
@@ -496,7 +632,7 @@ with tab2:
                 x['Baseline'],
                 x['Start'],
                 x['Finish'],
-                target_date
+                global_target_date
             ),
             axis=1
         )
