@@ -238,20 +238,22 @@ with tab1:
             kpi_box(row['name'], row['progress'], row['baseline'], None, None, target_date)
 
 
-# =========================
-# TAB 2 (FIXED - FULL FEATURE PRESERVED)
-# =========================
 
 with tab2:
+
+    import re
 
     selected_file = st.selectbox(
         "Pilih Ekosistem / File",
         list(excel_files.keys()),
-        key="file_selector"
+        key="file_selector_tab2"
     )
 
     if selected_file:
 
+        # =========================
+        # TARGET DATE
+        # =========================
         target_date = st.date_input(
             "Pilih Target Tanggal",
             value=date.today(),
@@ -259,11 +261,20 @@ with tab2:
         )
         target_date = datetime.combine(target_date, datetime.min.time())
 
+        # =========================
+        # LOAD DATA
+        # =========================
         df, leaf = load_and_process(
             selected_file,
             excel_files[selected_file],
             target_date
         )
+
+        # =========================
+        # CLEAN WBS FORMAT
+        # =========================
+        df['Outline number'] = df['Outline number'].astype(str).str.strip()
+        leaf['Outline number'] = leaf['Outline number'].astype(str).str.strip()
 
         # =========================
         # KPI GLOBAL
@@ -279,28 +290,48 @@ with tab2:
         level2 = df[df['Outline number'].str.match(r'^\d+\.\d+$')]
 
         cols = st.columns(3)
+
         for i, (_, row) in enumerate(level2.iterrows()):
             p, b = aggregate(leaf, row['Outline number'])
             with cols[i % 3]:
                 kpi_box(row['Name'], p, b, None, None, target_date)
 
         # =========================
-        # SELECT LEVEL 2
+        # SELECT OBJECT
         # =========================
         st.divider()
+
+        st.markdown("### 🔍 Monitoring per Objek Ekosistem")
 
         selected_l2 = st.selectbox(
             "Pilih Objek Ekosistem",
             level2['Name'],
-            key="l2_selector"
+            key="l2_selector_tab2"
         )
 
-        selected_code = level2[level2['Name'] == selected_l2]['Outline number'].values[0]
-
-        sub_tasks = leaf[leaf['Outline number'].str.startswith(selected_code)].copy()
+        selected_code = level2.loc[
+            level2['Name'] == selected_l2,
+            'Outline number'
+        ].values[0]
 
         # =========================
-        # STATUS (FIXED CALL - IMPORTANT)
+        # FIXED TREE FILTER (ALL DESCENDANTS + PARENT)
+        # =========================
+        def get_tree(df, code):
+            pattern = r'^' + re.escape(code) + r'(\.|$)'
+            return df[df['Outline number'].astype(str).str.match(pattern)].copy()
+
+        sub_tasks = get_tree(leaf, selected_code)
+
+        # include parent row from df (if exists)
+        parent_row = df[df['Outline number'] == selected_code]
+        sub_tasks = pd.concat([parent_row, sub_tasks], ignore_index=True)
+
+        # sort WBS
+        sub_tasks = sub_tasks.sort_values('Outline number')
+
+        # =========================
+        # STATUS CALCULATION
         # =========================
         sub_tasks['Status'] = sub_tasks.apply(
             lambda x: get_status(
@@ -322,34 +353,22 @@ with tab2:
         col1, col2, col3, col4 = st.columns(4)
 
         with col1:
-            if st.button(
-                f"✅ Complete ({len(sub_tasks[sub_tasks['Status']=='Complete'])})",
-                key="btn_complete"
-            ):
+            if st.button(f"✅ Complete ({len(sub_tasks[sub_tasks['Status']=='Complete'])})", key="tab2_c"):
                 st.session_state.status_filter = "Complete"
 
         with col2:
-            if st.button(
-                f"🟢 On Progress ({len(sub_tasks[sub_tasks['Status']=='On Progress'])})",
-                key="btn_progress"
-            ):
+            if st.button(f"🟢 On Progress ({len(sub_tasks[sub_tasks['Status']=='On Progress'])})", key="tab2_p"):
                 st.session_state.status_filter = "On Progress"
 
         with col3:
-            if st.button(
-                f"🟠 Concern ({len(sub_tasks[sub_tasks['Status']=='Concern'])})",
-                key="btn_concern"
-            ):
+            if st.button(f"🟠 Concern ({len(sub_tasks[sub_tasks['Status']=='Concern'])})", key="tab2_con"):
                 st.session_state.status_filter = "Concern"
 
         with col4:
-            if st.button(
-                f"🔴 Late ({len(sub_tasks[sub_tasks['Status']=='Late'])})",
-                key="btn_late"
-            ):
+            if st.button(f"🔴 Late ({len(sub_tasks[sub_tasks['Status']=='Late'])})", key="tab2_l"):
                 st.session_state.status_filter = "Late"
 
-        if st.button("🔄 Show All", key="btn_all"):
+        if st.button("🔄 Show All", key="tab2_all"):
             st.session_state.status_filter = "ALL"
 
         # =========================
@@ -358,73 +377,109 @@ with tab2:
         filtered = sub_tasks.copy()
 
         if st.session_state.status_filter != "ALL":
-            filtered = filtered[
-                filtered['Status'] == st.session_state.status_filter
-            ]
+            filtered = filtered[filtered['Status'] == st.session_state.status_filter]
 
         # =========================
-        # TABLE
+        # TABLE DISPLAY
         # =========================
         st.subheader("📋 Detail Task Summary")
 
         if filtered.empty:
             st.warning("Tidak ada data")
         else:
-            filtered['Level'] = filtered['Outline number'].apply(lambda x: x.count('.'))
+
+            filtered['Level'] = filtered['Outline number'].astype(str).str.count(r'\.')
 
             filtered['Name WBS'] = filtered.apply(
-                lambda r: "   " * (r['Level'] - 1) + "▸ " + r['Name'],
+                lambda r: "   " * max(r['Level'] - 1, 0) + "▸ " + str(r['Name']),
                 axis=1
             )
 
-            filtered['Start'] = filtered['Start'].dt.strftime('%d/%m/%Y')
-            filtered['Finish'] = filtered['Finish'].dt.strftime('%d/%m/%Y')
+            filtered['Start'] = pd.to_datetime(filtered['Start'], errors='coerce').dt.strftime('%d/%m/%Y')
+            filtered['Finish'] = pd.to_datetime(filtered['Finish'], errors='coerce').dt.strftime('%d/%m/%Y')
+
             filtered['Progress (%)'] = filtered['% complete'].map(lambda x: f"{x:.1f}%")
             filtered['Baseline (%)'] = filtered['Baseline'].map(lambda x: f"{x:.1f}%")
 
             st.dataframe(
                 filtered[
                     [
-                        'Outline number', 'Name WBS', 'Entitas',
-                        'Start', 'Finish',
-                        'Progress (%)', 'Baseline (%)',
+                        'Outline number',
+                        'Name WBS',
+                        'Entitas',
+                        'Start',
+                        'Finish',
+                        'Progress (%)',
+                        'Baseline (%)',
                         'Status'
                     ]
                 ],
-                use_container_width=True
+                use_container_width=True,
+                hide_index=True
             )
 
         # =========================
-        # ENTITAS SECTION (RESTORED FULL)
+        # ENTITAS SECTION (FULL TREE FIX)
         # =========================
-
         st.divider()
         st.markdown("## 🏢 Monitoring Berdasarkan Entitas")
 
+        import re
+
         all_entitas = sorted(leaf['Entitas'].dropna().unique())
 
-        selected_entitas_filter = st.selectbox(
+        selected_entitas = st.selectbox(
             "Pilih Entitas",
             all_entitas,
-            key="entitas_selector"
+            key="entitas_tab2"
         )
 
-        entitas_tasks = leaf[leaf['Entitas'] == selected_entitas_filter].copy()
+        # =========================
+        # AMBIL LEAF ENTITAS
+        # =========================
+        entitas_leaf = leaf[leaf['Entitas'] == selected_entitas].copy()
 
-        total_dur = entitas_tasks['Duration'].replace(0, 1).sum()
+        # =========================
+        # AMBIL SEMUA PARENT + TREE
+        # =========================
+        def get_full_tree_from_leaf(df_all, leaf_subset):
+            all_codes = set()
+
+            for code in leaf_subset['Outline number']:
+                parts = str(code).split('.')
+
+                # generate parent chain
+                for i in range(1, len(parts) + 1):
+                    parent_code = ".".join(parts[:i])
+                    all_codes.add(parent_code)
+
+            return df_all[df_all['Outline number'].isin(all_codes)].copy()
+
+
+        entitas_tasks = get_full_tree_from_leaf(df, entitas_leaf)
+
+        # =========================
+        # SORT BIAR RAPI
+        # =========================
+        entitas_tasks = entitas_tasks.sort_values('Outline number')
+
+        # =========================
+        # KPI HITUNG DARI LEAF (BENAR)
+        # =========================
+        total_dur = entitas_leaf['Duration'].replace(0, 1).sum()
 
         entitas_progress = (
-            (entitas_tasks['% complete'] * entitas_tasks['Duration']).sum()
+            (entitas_leaf['% complete'] * entitas_leaf['Duration']).sum()
             / total_dur
         )
 
         entitas_baseline = (
-            (entitas_tasks['Baseline'] * entitas_tasks['Duration']).sum()
+            (entitas_leaf['Baseline'] * entitas_leaf['Duration']).sum()
             / total_dur
         )
 
         kpi_box(
-            f"Performance - {selected_entitas_filter}",
+            f"Performance - {selected_entitas}",
             entitas_progress,
             entitas_baseline,
             None,
@@ -432,6 +487,9 @@ with tab2:
             target_date
         )
 
+        # =========================
+        # STATUS (APPLY KE FULL TREE)
+        # =========================
         entitas_tasks['Status'] = entitas_tasks.apply(
             lambda x: get_status(
                 x['% complete'],
@@ -443,42 +501,36 @@ with tab2:
             axis=1
         )
 
+        # =========================
+        # FILTER STATUS
+        # =========================
         if "entitas_filter_status" not in st.session_state:
             st.session_state.entitas_filter_status = "ALL"
 
         col1, col2, col3, col4 = st.columns(4)
 
         with col1:
-            if st.button(
-                f"✅ Complete ({len(entitas_tasks[entitas_tasks['Status']=='Complete'])})",
-                key="ent_c"
-            ):
+            if st.button(f"✅ Complete ({len(entitas_tasks[entitas_tasks['Status']=='Complete'])})", key="ent_c"):
                 st.session_state.entitas_filter_status = "Complete"
 
         with col2:
-            if st.button(
-                f"🟢 On Progress ({len(entitas_tasks[entitas_tasks['Status']=='On Progress'])})",
-                key="ent_p"
-            ):
+            if st.button(f"🟢 On Progress ({len(entitas_tasks[entitas_tasks['Status']=='On Progress'])})", key="ent_p"):
                 st.session_state.entitas_filter_status = "On Progress"
 
         with col3:
-            if st.button(
-                f"🟠 Concern ({len(entitas_tasks[entitas_tasks['Status']=='Concern'])})",
-                key="ent_con"
-            ):
+            if st.button(f"🟠 Concern ({len(entitas_tasks[entitas_tasks['Status']=='Concern'])})", key="ent_con"):
                 st.session_state.entitas_filter_status = "Concern"
 
         with col4:
-            if st.button(
-                f"🔴 Late ({len(entitas_tasks[entitas_tasks['Status']=='Late'])})",
-                key="ent_l"
-            ):
+            if st.button(f"🔴 Late ({len(entitas_tasks[entitas_tasks['Status']=='Late'])})", key="ent_l"):
                 st.session_state.entitas_filter_status = "Late"
 
         if st.button("🔄 Show All (Entitas)", key="ent_all"):
             st.session_state.entitas_filter_status = "ALL"
 
+        # =========================
+        # APPLY FILTER
+        # =========================
         filtered_entitas = entitas_tasks.copy()
 
         if st.session_state.entitas_filter_status != "ALL":
@@ -486,20 +538,24 @@ with tab2:
                 filtered_entitas['Status'] == st.session_state.entitas_filter_status
             ]
 
+        # =========================
+        # DISPLAY TABLE
+        # =========================
         st.subheader("📋 Detail Task per Entitas")
 
         if filtered_entitas.empty:
             st.warning("Tidak ada data")
         else:
-            filtered_entitas['Level'] = filtered_entitas['Outline number'].apply(lambda x: x.count('.'))
+
+            filtered_entitas['Level'] = filtered_entitas['Outline number'].str.count(r'\.')
 
             filtered_entitas['Name WBS'] = filtered_entitas.apply(
-                lambda r: "   " * (r['Level'] - 1) + "▸ " + r['Name'],
+                lambda r: "   " * max(r['Level'] - 1, 0) + "▸ " + str(r['Name']),
                 axis=1
             )
 
-            filtered_entitas['Start'] = filtered_entitas['Start'].dt.strftime('%d/%m/%Y')
-            filtered_entitas['Finish'] = filtered_entitas['Finish'].dt.strftime('%d/%m/%Y')
+            filtered_entitas['Start'] = pd.to_datetime(filtered_entitas['Start'], errors='coerce').dt.strftime('%d/%m/%Y')
+            filtered_entitas['Finish'] = pd.to_datetime(filtered_entitas['Finish'], errors='coerce').dt.strftime('%d/%m/%Y')
 
             filtered_entitas['Progress (%)'] = filtered_entitas['% complete'].map(lambda x: f"{x:.1f}%")
             filtered_entitas['Baseline (%)'] = filtered_entitas['Baseline'].map(lambda x: f"{x:.1f}%")
@@ -507,11 +563,16 @@ with tab2:
             st.dataframe(
                 filtered_entitas[
                     [
-                        'Outline number', 'Name WBS', 'Entitas',
-                        'Start', 'Finish',
-                        'Progress (%)', 'Baseline (%)',
+                        'Outline number',
+                        'Name WBS',
+                        'Entitas',
+                        'Start',
+                        'Finish',
+                        'Progress (%)',
+                        'Baseline (%)',
                         'Status'
                     ]
                 ],
-                use_container_width=True
+                use_container_width=True,
+                hide_index=True
             )
