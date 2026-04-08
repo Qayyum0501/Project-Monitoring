@@ -9,16 +9,16 @@ from oauth2client.service_account import ServiceAccountCredentials
 import base64
 import re
 
+st.set_page_config(
+    page_title="Dashboard Pelindo",
+    layout="wide"
+)
+
 def get_base64_image(image_path):
     with open(image_path, "rb") as img_file:
         return base64.b64encode(img_file.read()).decode()
 
 logo_base64 = get_base64_image("logo_pelindo.png")
-
-# =========================
-# CONFIG
-# =========================
-st.set_page_config(page_title="Login - Dashboard Pelindo", layout="centered")
 
 # =========================
 # LOAD LOGO
@@ -232,11 +232,6 @@ credentials = ServiceAccountCredentials.from_json_keyfile_dict(
 gauth = GoogleAuth()
 gauth.credentials = credentials
 drive = GoogleDrive(gauth)
-
-# =========================
-# CONFIG
-# =========================
-st.set_page_config(page_title="Project Monitoring", layout="wide")
 
 col1, col2 = st.columns([10,1])
 
@@ -635,9 +630,12 @@ if st.session_state.active_tab == "tab2":
         cols = st.columns(3)
 
         for i, (_, row) in enumerate(level2.iterrows()):
-            p, b = aggregate(leaf, row['Outline number'])
+            p = row['% complete']
+            b = row['Baseline']
+
             with cols[i % 3]:
                 kpi_box(row['Name'], p, b, None, None, global_target_date)
+
 
         # =========================
         # SELECT OBJECT
